@@ -1,9 +1,13 @@
 {
   "name": "memory-sync",
   "version": "1.0.0",
+  "type": "module",
   "description": "Sync Claude Code memories across projects",
   "bin": {
     "memory-sync": "./cli.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/checkbox": "^5.1.3"
+  }
 }

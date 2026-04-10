@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-'use strict'
 
-const fs = require('fs')
-const path = require('path')
-const { execSync } = require('child_process')
+import fs from 'fs'
+import path from 'path'
+import { execSync } from 'child_process'
+import checkbox, { Separator } from '@inquirer/checkbox'
 
-const PROJECTS_DIR = path.join(process.env.HOME, '.claude', 'projects')
+const HOME = process.env.HOME
+const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
 
 // ===== CLI args =====
 
@@ -14,6 +15,15 @@ const listOnly = args.includes('--list')
 const selectAll = args.includes('--all')
 const exportIdx = args.indexOf('--export')
 const exportPath = exportIdx !== -1 ? args[exportIdx + 1] : null
+const modelIdx = args.indexOf('--model')
+const modelArg = modelIdx !== -1 ? args[modelIdx + 1] : null
+
+const MODEL_MAP = {
+  sonnet: 'claude-sonnet-4-6',
+  opus: 'claude-opus-4-6',
+  haiku: 'claude-haiku-4-5-20251001',
+}
+const modelId = modelArg ? (MODEL_MAP[modelArg] || modelArg) : MODEL_MAP.sonnet
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
@@ -24,6 +34,7 @@ if (args.includes('--help') || args.includes('-h')) {
     memory-sync --list       List all memories
     memory-sync --all        Select all → format → clipboard
     memory-sync --export <f> Export to file
+    memory-sync --model <m>  Model: sonnet(default), opus, haiku
   `)
   process.exit(0)
 }
@@ -68,7 +79,7 @@ function parseFrontmatter(content) {
 
 function projectName(dirName) {
   const decoded = dirName.replace(/^-/, '').replace(/-/g, '/')
-  const home = process.env.HOME.replace(/\//g, '/')
+  const home = HOME.replace(/\//g, '/')
   const rel = decoded.startsWith(home.slice(1))
     ? '~/' + decoded.slice(home.length)
     : decoded
@@ -99,105 +110,6 @@ function scanMemories() {
   return memories
 }
 
-// ===== Interactive Selector =====
-
-let lastRenderedLines = 0
-
-function visLineCount(str, cols) {
-  // ANSI escape codes don't occupy visual width
-  const clean = str.replace(/\x1B\[[0-9;]*m/g, '')
-  return Math.max(1, Math.ceil(clean.length / cols))
-}
-
-function render(memories, cursor, selected, expandedIdx, first) {
-  const cols = process.stdout.columns || 80
-
-  if (!first) {
-    process.stdout.write(`\x1B[${lastRenderedLines}A\x1B[J`)
-  }
-
-  let lines = 0
-  const w = s => { process.stdout.write(s + '\n'); lines += visLineCount(s, cols) }
-
-  w(`  \x1B[2m↑↓ move  Space select  e expand  a all  Enter confirm (${selected.size} selected)\x1B[0m`)
-
-  let lastProj = ''
-  const bodyMax = cols - 8
-  memories.forEach((m, i) => {
-    if (m.project !== lastProj) {
-      lastProj = m.project
-      w(`  \x1B[36m${lastProj}\x1B[0m`)
-    }
-    const ptr = i === cursor ? '\x1B[33m❯\x1B[0m' : ' '
-    const chk = selected.has(i) ? '\x1B[32m✔\x1B[0m' : '\x1B[2m○\x1B[0m'
-    const tag = m.type.padEnd(10)
-    const hi = i === cursor ? `\x1B[1m${m.name}\x1B[0m` : m.name
-    const arrow = i === expandedIdx ? ' ▼' : ''
-    w(`  ${ptr} ${chk}  \x1B[2m${tag}\x1B[0m  ${hi}${arrow}`)
-    if (i === expandedIdx) {
-      for (const line of m.body.split('\n')) {
-        const t = line.length > bodyMax ? line.slice(0, bodyMax - 1) + '…' : line
-        w(`       \x1B[2m${t}\x1B[0m`)
-      }
-    }
-  })
-
-  lastRenderedLines = lines
-}
-
-function interactiveSelect(memories) {
-  return new Promise(resolve => {
-    const selected = new Set()
-    let expandedIdx = -1
-    let cursor = 0
-
-    render(memories, cursor, selected, expandedIdx, true)
-
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-    process.stdin.setEncoding('utf8')
-
-    const onData = key => {
-      if (key === '\u0003' || key === 'q') {
-        process.stdout.write('\n')
-        process.stdin.setRawMode(false)
-        process.exit(0)
-      }
-      if (key === '\r') {
-        process.stdout.write('\n')
-        process.stdin.removeListener('data', onData)
-        process.stdin.setRawMode(false)
-        process.stdin.pause()
-        resolve([...selected].sort().map(i => memories[i]))
-        return
-      }
-      if (key === 'e') {
-        expandedIdx = expandedIdx === cursor ? -1 : cursor
-      }
-      if (key === ' ') {
-        selected.has(cursor) ? selected.delete(cursor) : selected.add(cursor)
-        cursor = Math.min(cursor + 1, memories.length - 1)
-        if (expandedIdx >= 0) expandedIdx = cursor
-      }
-      if (key === 'a') {
-        selected.size === memories.length ? selected.clear() : memories.forEach((_, i) => selected.add(i))
-      }
-      if (key === '\x1B[A' || key === 'k') {
-        cursor = Math.max(0, cursor - 1)
-        if (expandedIdx >= 0) expandedIdx = cursor
-      }
-      if (key === '\x1B[B' || key === 'j') {
-        cursor = Math.min(memories.length - 1, cursor + 1)
-        if (expandedIdx >= 0) expandedIdx = cursor
-      }
-
-      render(memories, cursor, selected, expandedIdx, false)
-    }
-
-    process.stdin.on('data', onData)
-  })
-}
-
 // ===== Main =====
 
 async function main() {
@@ -208,9 +120,8 @@ async function main() {
     process.exit(0)
   }
 
-  console.log(`Found ${memories.length} memories:\n`)
-
   if (listOnly) {
+    console.log(`Found ${memories.length} memories:\n`)
     let lastProj = ''
     memories.forEach((m, i) => {
       if (m.project !== lastProj) { lastProj = m.project; console.log(`  \x1B[36m${lastProj}\x1B[0m`) }
@@ -224,21 +135,42 @@ async function main() {
     selected = memories
     console.log(`Selected all ${memories.length} memories.`)
   } else {
-    selected = await interactiveSelect(memories)
+    // Build choices with project separators
+    const choices = []
+    let lastProj = ''
+    for (const m of memories) {
+      if (m.project !== lastProj) {
+        lastProj = m.project
+        choices.push(new Separator(`── ${lastProj} ──`))
+      }
+      choices.push({
+        name: `[${m.type}]  ${m.name}`,
+        value: m,
+        description: m.body
+      })
+    }
+
+    selected = await checkbox({
+      message: `Select memories to export (${memories.length} found)`,
+      choices,
+      pageSize: 20
+    })
+
     if (selected.length === 0) {
       console.log('Nothing selected.')
       return
     }
   }
 
-  console.log(`Formatting ${selected.length} memories...\n`)
+  console.log(`\nFormatting ${selected.length} memories...\n`)
 
   const body = selected.map((m, i) =>
     `### Memory ${i + 1}: ${m.name} (${m.type}, project: ${m.project})\n\n${m.body}`
   ).join('\n\n---\n\n')
 
   try {
-    const result = execSync('claude -p --no-session-persistence', {
+    console.log(`Using model: ${modelId}\n`)
+    const result = execSync(`claude -p --no-session-persistence --model ${modelId}`, {
       input: PROMPT + body,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
