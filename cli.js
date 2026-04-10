@@ -6,6 +6,19 @@ import { execSync } from 'child_process'
 import checkbox, { Separator } from '@inquirer/checkbox'
 import select from '@inquirer/select'
 
+// Map j/k to ↓/↑ for all inquirer prompts
+const origEmit = process.stdin.emit.bind(process.stdin)
+process.stdin.emit = function (event, ...args) {
+  if (event === 'keypress') {
+    const key = args[1]
+    if (key && !key.ctrl && !key.meta) {
+      if (key.name === 'j') return origEmit('keypress', undefined, { ...key, name: 'down' })
+      if (key.name === 'k') return origEmit('keypress', undefined, { ...key, name: 'up' })
+    }
+  }
+  return origEmit(event, ...args)
+}
+
 const HOME = process.env.HOME
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
 
@@ -147,12 +160,14 @@ async function main() {
       choices.push({
         name: `[${m.type}]  ${m.name}`,
         value: m,
+        checked: true,
         description: m.body
       })
     }
 
     selected = await checkbox({
-      message: `Select memories to export (${memories.length} found)`,
+      message: `Select memories to export (${memories.length} found)\n  ↑↓ navigate · space select · a all · i invert · ⏎ submit`,
+      instructions: false,
       choices,
       pageSize: 20,
       theme: {
