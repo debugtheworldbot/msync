@@ -1,0 +1,9 @@
+{
+  "name": "memory-sync",
+  "version": "1.0.0",
+  "description": "Sync Claude Code memories across projects",
+  "bin": {
+    "memory-sync": "./cli.js"
+  },
+  "license": "MIT"
+}
