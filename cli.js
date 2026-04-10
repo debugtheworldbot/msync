@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import checkbox, { Separator } from '@inquirer/checkbox'
+import select from '@inquirer/select'
 
 const HOME = process.env.HOME
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
@@ -153,7 +154,12 @@ async function main() {
     selected = await checkbox({
       message: `Select memories to export (${memories.length} found)`,
       choices,
-      pageSize: 20
+      pageSize: 20,
+      theme: {
+        style: {
+          answer: v => '\n' + v.split(', ').map(s => `  · ${s}`).join('\n')
+        }
+      }
     })
 
     if (selected.length === 0) {
@@ -162,15 +168,27 @@ async function main() {
     }
   }
 
-  console.log(`\nFormatting ${selected.length} memories...\n`)
+  // Select summary model
+  let model = modelId
+  if (!modelArg) {
+    model = await select({
+      message: 'Select summary model',
+      choices: [
+        { name: 'Sonnet 4.6', value: 'claude-sonnet-4-6' },
+        { name: 'Opus 4.6',   value: 'claude-opus-4-6' },
+        { name: 'Haiku 4.5',  value: 'claude-haiku-4-5-20251001' },
+      ]
+    })
+  }
+
+  console.log(`\nFormatting ${selected.length} memories with ${model}...\n`)
 
   const body = selected.map((m, i) =>
     `### Memory ${i + 1}: ${m.name} (${m.type}, project: ${m.project})\n\n${m.body}`
   ).join('\n\n---\n\n')
 
   try {
-    console.log(`Using model: ${modelId}\n`)
-    const result = execSync(`claude -p --no-session-persistence --model ${modelId}`, {
+    const result = execSync(`claude -p --no-session-persistence --model ${model}`, {
       input: PROMPT + body,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
@@ -198,6 +216,7 @@ async function main() {
 }
 
 main().catch(err => {
+  if (err.name === 'ExitPromptError') process.exit(0)
   console.error(err)
   process.exit(1)
 })
